@@ -509,7 +509,7 @@ bool IsSolvable(const SigningProvider& provider, const CScript& script)
     return false;
 }
 
-PartiallySignedTransaction::PartiallySignedTransaction(const CTransaction& tx) : tx(tx)
+PartiallySignedTransaction::PartiallySignedTransaction(const CMutableTransaction& tx) : tx(tx)
 {
     inputs.resize(tx.vin.size());
     outputs.resize(tx.vout.size());
@@ -705,5 +705,7 @@ FlatSigningProvider Merge(const FlatSigningProvider& a, const FlatSigningProvide
     ret.pubkeys.insert(b.pubkeys.begin(), b.pubkeys.end());
     ret.keys = a.keys;
     ret.keys.insert(b.keys.begin(), b.keys.end());
+    ret.origins = a.origins;
+    ret.origins.insert(b.origins.begin(), b.origins.end());
     return ret;
 }
