@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Copyright (c) 2018 The Bitcoin Core developers
+# Copyright (c) 2018-2019 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 #
@@ -13,6 +13,7 @@ export LC_ALL=C
 FUNCTION_NAMES_AND_NUMBER_OF_LEADING_ARGUMENTS=(
     "FatalError,0"
     "fprintf,1"
+    "tfm::format,1" # Assuming tfm::::format(std::ostream&, ...
     "LogConnectFailure,1"
     "LogPrint,1"
     "LogPrintf,0"

@@ -1,5 +1,5 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
-// Copyright (c) 2009-2017 The Bitcoin Core developers
+// Copyright (c) 2009-2019 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -9,12 +9,13 @@
 #include <ui_interface.h>
 #include <util/system.h>
 #include <util/time.h>
+#include <util/translation.h>
 
 
 BanMan::BanMan(fs::path ban_file, CClientUIInterface* client_interface, int64_t default_ban_time)
     : m_client_interface(client_interface), m_ban_db(std::move(ban_file)), m_default_ban_time(default_ban_time)
 {
-    if (m_client_interface) m_client_interface->InitMessage(_("Loading banlist..."));
+    if (m_client_interface) m_client_interface->InitMessage(_("Loading banlist...").translated);
 
     int64_t n_start = GetTimeMillis();
     m_is_dirty = false;
@@ -67,14 +68,36 @@ void BanMan::ClearBanned()
     if (m_client_interface) m_client_interface->BannedListChanged();
 }
 
-bool BanMan::IsBanned(CNetAddr net_addr)
+int BanMan::IsBannedLevel(CNetAddr net_addr)
 {
+    // Returns the most severe level of banning that applies to this address.
+    // 0 - Not banned
+    // 1 - Automatic misbehavior ban
+    // 2 - Any other ban
+    int level = 0;
+    auto current_time = GetTime();
     LOCK(m_cs_banned);
     for (const auto& it : m_banned) {
         CSubNet sub_net = it.first;
         CBanEntry ban_entry = it.second;
 
-        if (sub_net.Match(net_addr) && GetTime() < ban_entry.nBanUntil) {
+        if (current_time < ban_entry.nBanUntil && sub_net.Match(net_addr)) {
+            if (ban_entry.banReason != BanReasonNodeMisbehaving) return 2;
+            level = 1;
+        }
+    }
+    return level;
+}
+
+bool BanMan::IsBanned(CNetAddr net_addr)
+{
+    auto current_time = GetTime();
+    LOCK(m_cs_banned);
+    for (const auto& it : m_banned) {
+        CSubNet sub_net = it.first;
+        CBanEntry ban_entry = it.second;
+
+        if (current_time < ban_entry.nBanUntil && sub_net.Match(net_addr)) {
             return true;
         }
     }
@@ -83,11 +106,12 @@ bool BanMan::IsBanned(CNetAddr net_addr)
 
 bool BanMan::IsBanned(CSubNet sub_net)
 {
+    auto current_time = GetTime();
     LOCK(m_cs_banned);
     banmap_t::iterator i = m_banned.find(sub_net);
     if (i != m_banned.end()) {
         CBanEntry ban_entry = (*i).second;
-        if (GetTime() < ban_entry.nBanUntil) {
+        if (current_time < ban_entry.nBanUntil) {
             return true;
         }
     }

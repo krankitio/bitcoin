@@ -1,5 +1,5 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
-// Copyright (c) 2009-2018 The Bitcoin Core developers
+// Copyright (c) 2009-2019 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -13,8 +13,6 @@
 #include <assert.h>
 #include <ios>
 #include <limits>
-#include <map>
-#include <set>
 #include <stdint.h>
 #include <stdio.h>
 #include <string>
@@ -139,7 +137,7 @@ private:
 
 public:
 
-    /*
+    /**
      * @param[in]  type Serialization Type
      * @param[in]  version Serialization Version (including any flags)
      * @param[in]  data Referenced byte vector to overwrite/append
@@ -153,7 +151,7 @@ public:
         }
     }
 
-    /*
+    /**
      * (other params same as above)
      * @param[in]  args  A list of items to deserialize starting at pos.
      */
@@ -715,15 +713,15 @@ private:
     const int nType;
     const int nVersion;
 
-    FILE *src;            // source file
-    uint64_t nSrcPos;     // how many bytes have been read from source
-    uint64_t nReadPos;    // how many bytes have been read from this
-    uint64_t nReadLimit;  // up to which position we're allowed to read
-    uint64_t nRewind;     // how many bytes we guarantee to rewind
-    std::vector<char> vchBuf; // the buffer
+    FILE *src;            //!< source file
+    uint64_t nSrcPos;     //!< how many bytes have been read from source
+    uint64_t nReadPos;    //!< how many bytes have been read from this
+    uint64_t nReadLimit;  //!< up to which position we're allowed to read
+    uint64_t nRewind;     //!< how many bytes we guarantee to rewind
+    std::vector<char> vchBuf; //!< the buffer
 
 protected:
-    // read data from the source to fill the buffer
+    //! read data from the source to fill the buffer
     bool Fill() {
         unsigned int pos = nSrcPos % vchBuf.size();
         unsigned int readNow = vchBuf.size() - pos;
@@ -735,16 +733,17 @@ protected:
         size_t nBytes = fread((void*)&vchBuf[pos], 1, readNow, src);
         if (nBytes == 0) {
             throw std::ios_base::failure(feof(src) ? "CBufferedFile::Fill: end of file" : "CBufferedFile::Fill: fread failed");
-        } else {
-            nSrcPos += nBytes;
-            return true;
         }
+        nSrcPos += nBytes;
+        return true;
     }
 
 public:
     CBufferedFile(FILE *fileIn, uint64_t nBufSize, uint64_t nRewindIn, int nTypeIn, int nVersionIn) :
         nType(nTypeIn), nVersion(nVersionIn), nSrcPos(0), nReadPos(0), nReadLimit(std::numeric_limits<uint64_t>::max()), nRewind(nRewindIn), vchBuf(nBufSize, 0)
     {
+        if (nRewindIn >= nBufSize)
+            throw std::ios_base::failure("Rewind limit must be less than buffer size");
         src = fileIn;
     }
 
@@ -768,17 +767,15 @@ public:
         }
     }
 
-    // check whether we're at the end of the source file
+    //! check whether we're at the end of the source file
     bool eof() const {
         return nReadPos == nSrcPos && feof(src);
     }
 
-    // read a number of bytes
+    //! read a number of bytes
     void read(char *pch, size_t nSize) {
         if (nSize + nReadPos > nReadLimit)
             throw std::ios_base::failure("Read attempted past buffer limit");
-        if (nSize + nRewind > vchBuf.size())
-            throw std::ios_base::failure("Read larger than buffer size");
         while (nSize > 0) {
             if (nReadPos == nSrcPos)
                 Fill();
@@ -795,23 +792,26 @@ public:
         }
     }
 
-    // return the current reading position
+    //! return the current reading position
     uint64_t GetPos() const {
         return nReadPos;
     }
 
-    // rewind to a given reading position
+    //! rewind to a given reading position
     bool SetPos(uint64_t nPos) {
-        nReadPos = nPos;
-        if (nReadPos + nRewind < nSrcPos) {
-            nReadPos = nSrcPos - nRewind;
+        size_t bufsize = vchBuf.size();
+        if (nPos + bufsize < nSrcPos) {
+            // rewinding too far, rewind as far as possible
+            nReadPos = nSrcPos - bufsize;
             return false;
-        } else if (nReadPos > nSrcPos) {
+        }
+        if (nPos > nSrcPos) {
+            // can't go this far forward, go as far as possible
             nReadPos = nSrcPos;
             return false;
-        } else {
-            return true;
         }
+        nReadPos = nPos;
+        return true;
     }
 
     bool Seek(uint64_t nPos) {
@@ -826,8 +826,8 @@ public:
         return true;
     }
 
-    // prevent reading beyond a certain position
-    // no argument removes the limit
+    //! prevent reading beyond a certain position
+    //! no argument removes the limit
     bool SetLimit(uint64_t nPos = std::numeric_limits<uint64_t>::max()) {
         if (nPos < nReadPos)
             return false;
@@ -842,7 +842,7 @@ public:
         return (*this);
     }
 
-    // search for a given byte in the stream, and remain positioned on it
+    //! search for a given byte in the stream, and remain positioned on it
     void FindByte(char ch) {
         while (true) {
             if (nReadPos == nSrcPos)

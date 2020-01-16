@@ -1,5 +1,5 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
-// Copyright (c) 2009-2017 The Bitcoin Core developers
+// Copyright (c) 2009-2020 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 #ifndef BITCOIN_BANMAN_H
@@ -10,6 +10,7 @@
 
 #include <addrdb.h>
 #include <fs.h>
+#include <net_types.h> // For banmap_t
 #include <sync.h>
 
 // NOTE: When adjusting this, update rpcnet:setban's help ("24h")
@@ -42,6 +43,7 @@ public:
     void Ban(const CNetAddr& net_addr, const BanReason& ban_reason, int64_t ban_time_offset = 0, bool since_unix_epoch = false);
     void Ban(const CSubNet& sub_net, const BanReason& ban_reason, int64_t ban_time_offset = 0, bool since_unix_epoch = false);
     void ClearBanned();
+    int IsBannedLevel(CNetAddr net_addr);
     bool IsBanned(CNetAddr net_addr);
     bool IsBanned(CSubNet sub_net);
     bool Unban(const CNetAddr& net_addr);
@@ -57,7 +59,7 @@ private:
     //!clean unused entries (if bantime has expired)
     void SweepBanned();
 
-    CCriticalSection m_cs_banned;
+    RecursiveMutex m_cs_banned;
     banmap_t m_banned GUARDED_BY(m_cs_banned);
     bool m_is_dirty GUARDED_BY(m_cs_banned);
     CClientUIInterface* m_client_interface = nullptr;
@@ -65,5 +67,4 @@ private:
     const int64_t m_default_ban_time;
 };
 
-extern std::unique_ptr<BanMan> g_banman;
 #endif

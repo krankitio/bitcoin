@@ -1,5 +1,5 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
-// Copyright (c) 2009-2018 The Bitcoin Core developers
+// Copyright (c) 2009-2019 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -10,9 +10,7 @@
 #include <fs.h>
 #include <serialize.h>
 #include <streams.h>
-#include <sync.h>
 #include <util/system.h>
-#include <version.h>
 
 #include <atomic>
 #include <map>
@@ -50,10 +48,10 @@ public:
     std::condition_variable_any m_db_in_use;
 
     BerkeleyEnvironment(const fs::path& env_directory);
+    BerkeleyEnvironment();
     ~BerkeleyEnvironment();
     void Reset();
 
-    void MakeMock();
     bool IsMock() const { return fMockDb; }
     bool IsInitialized() const { return fDbEnvInit; }
     bool IsDatabaseLoaded(const std::string& db_filename) const { return m_databases.find(db_filename) != m_databases.end(); }
@@ -101,8 +99,11 @@ public:
 /** Return whether a wallet database is currently loaded. */
 bool IsWalletLoaded(const fs::path& wallet_path);
 
+/** Given a wallet directory path or legacy file path, return path to main data file in the wallet database. */
+fs::path WalletDataFilePath(const fs::path& wallet_path);
+
 /** Get BerkeleyEnvironment and database filename given a wallet path. */
-BerkeleyEnvironment* GetWalletEnv(const fs::path& wallet_path, std::string& database_filename);
+std::shared_ptr<BerkeleyEnvironment> GetWalletEnv(const fs::path& wallet_path, std::string& database_filename);
 
 /** An instance of this class represents one database.
  * For BerkeleyDB this is just a (env, strFile) tuple.
@@ -117,17 +118,11 @@ public:
     }
 
     /** Create DB handle to real database */
-    BerkeleyDatabase(const fs::path& wallet_path, bool mock = false) :
-        nUpdateCounter(0), nLastSeen(0), nLastFlushed(0), nLastWalletUpdate(0)
+    BerkeleyDatabase(std::shared_ptr<BerkeleyEnvironment> env, std::string filename) :
+        nUpdateCounter(0), nLastSeen(0), nLastFlushed(0), nLastWalletUpdate(0), env(std::move(env)), strFile(std::move(filename))
     {
-        env = GetWalletEnv(wallet_path, strFile);
-        auto inserted = env->m_databases.emplace(strFile, std::ref(*this));
+        auto inserted = this->env->m_databases.emplace(strFile, std::ref(*this));
         assert(inserted.second);
-        if (mock) {
-            env->Close();
-            env->Reset();
-            env->MakeMock();
-        }
     }
 
     ~BerkeleyDatabase() {
@@ -140,7 +135,8 @@ public:
     /** Return object for accessing database at specified path. */
     static std::unique_ptr<BerkeleyDatabase> Create(const fs::path& path)
     {
-        return MakeUnique<BerkeleyDatabase>(path);
+        std::string filename;
+        return MakeUnique<BerkeleyDatabase>(GetWalletEnv(path, filename), std::move(filename));
     }
 
     /** Return object for accessing dummy database with no read/write capabilities. */
@@ -152,7 +148,7 @@ public:
     /** Return object for accessing temporary in-memory database. */
     static std::unique_ptr<BerkeleyDatabase> CreateMock()
     {
-        return MakeUnique<BerkeleyDatabase>("", true /* mock */);
+        return MakeUnique<BerkeleyDatabase>(std::make_shared<BerkeleyEnvironment>(), "");
     }
 
     /** Rewrite the entire database on disk, with the exception of key pszSkip if non-zero
@@ -176,12 +172,21 @@ public:
     unsigned int nLastFlushed;
     int64_t nLastWalletUpdate;
 
+    /**
+     * Pointer to shared database environment.
+     *
+     * Normally there is only one BerkeleyDatabase object per
+     * BerkeleyEnvivonment, but in the special, backwards compatible case where
+     * multiple wallet BDB data files are loaded from the same directory, this
+     * will point to a shared instance that gets freed when the last data file
+     * is closed.
+     */
+    std::shared_ptr<BerkeleyEnvironment> env;
+
     /** Database pointer. This is initialized lazily and reset during flushes, so it can be null. */
     std::unique_ptr<Db> m_db;
 
 private:
-    /** BerkeleyDB specific */
-    BerkeleyEnvironment *env;
     std::string strFile;
 
     /** Return whether this database handle is a dummy for testing.
@@ -239,7 +244,7 @@ public:
     /* verifies the database environment */
     static bool VerifyEnvironment(const fs::path& file_path, std::string& errorStr);
     /* verifies the database file */
-    static bool VerifyDatabaseFile(const fs::path& file_path, std::string& warningStr, std::string& errorStr, BerkeleyEnvironment::recoverFunc_type recoverFunc);
+    static bool VerifyDatabaseFile(const fs::path& file_path, std::vector<std::string>& warnings, std::string& errorStr, BerkeleyEnvironment::recoverFunc_type recoverFunc);
 
     template <typename K, typename T>
     bool Read(const K& key, T& value)
@@ -390,17 +395,6 @@ public:
         int ret = activeTxn->abort();
         activeTxn = nullptr;
         return (ret == 0);
-    }
-
-    bool ReadVersion(int& nVersion)
-    {
-        nVersion = 0;
-        return Read(std::string("version"), nVersion);
-    }
-
-    bool WriteVersion(int nVersion)
-    {
-        return Write(std::string("version"), nVersion);
     }
 
     bool static Rewrite(BerkeleyDatabase& database, const char* pszSkip = nullptr);

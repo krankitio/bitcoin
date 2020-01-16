@@ -1,5 +1,5 @@
 // Copyright (c) 2012 Pieter Wuille
-// Copyright (c) 2012-2018 The Bitcoin Core developers
+// Copyright (c) 2012-2020 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -53,14 +53,10 @@ private:
 
 public:
 
-    ADD_SERIALIZE_METHODS;
-
-    template <typename Stream, typename Operation>
-    inline void SerializationOp(Stream& s, Operation ser_action) {
-        READWRITEAS(CAddress, *this);
-        READWRITE(source);
-        READWRITE(nLastSuccess);
-        READWRITE(nAttempts);
+    SERIALIZE_METHODS(CAddrInfo, obj)
+    {
+        READWRITEAS(CAddress, obj);
+        READWRITE(obj.source, obj.nLastSuccess, obj.nAttempts);
     }
 
     CAddrInfo(const CAddress &addrIn, const CNetAddr &addrSource) : CAddress(addrIn), source(addrSource)
@@ -166,6 +162,9 @@ public:
 //! the maximum number of tried addr collisions to store
 #define ADDRMAN_SET_TRIED_COLLISION_SIZE 10
 
+//! the maximum time we'll spend trying to resolve a tried table collision, in seconds
+static const int64_t ADDRMAN_TEST_WINDOW = 40*60; // 40 minutes
+
 /**
  * Stochastical (IP) address manager
  */
@@ -173,7 +172,7 @@ class CAddrMan
 {
 protected:
     //! critical section to protect the inner data structures
-    mutable CCriticalSection cs;
+    mutable RecursiveMutex cs;
 
 private:
     //! last used nId
@@ -291,7 +290,7 @@ public:
      * This format is more complex, but significantly smaller (at most 1.5 MiB), and supports
      * changes to the ADDRMAN_ parameters without breaking the on-disk structure.
      *
-     * We don't use ADD_SERIALIZE_METHODS since the serialization and deserialization code has
+     * We don't use SERIALIZE_METHODS since the serialization and deserialization code has
      * very little in common.
      */
     template<typename Stream>

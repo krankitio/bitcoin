@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Copyright (c) 2010 ArtForz -- public domain half-a-node
 # Copyright (c) 2012 Jeff Garzik
-# Copyright (c) 2010-2018 The Bitcoin Core developers
+# Copyright (c) 2010-2019 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Bitcoin test framework primitive and message structures
@@ -28,7 +28,7 @@ import struct
 import time
 
 from test_framework.siphash import siphash256
-from test_framework.util import hex_str_to_bytes, bytes_to_hex_str
+from test_framework.util import hex_str_to_bytes, assert_equal
 
 MIN_VERSION_SUPPORTED = 60001
 MY_VERSION = 70014  # past bip-31 for ping/pong
@@ -43,7 +43,7 @@ COIN = 100000000  # 1 btc in satoshis
 BIP125_SEQUENCE_NUMBER = 0xfffffffd  # Sequence number that is BIP 125 opt-in and BIP 68-opt-out
 
 NODE_NETWORK = (1 << 0)
-# NODE_GETUTXO = (1 << 1)
+NODE_GETUTXO = (1 << 1)
 NODE_BLOOM = (1 << 2)
 NODE_WITNESS = (1 << 3)
 NODE_NETWORK_LIMITED = (1 << 10)
@@ -181,7 +181,7 @@ def FromHex(obj, hex_string):
 
 # Convert a binary-serializable object to hex (eg for submission via RPC)
 def ToHex(obj):
-    return bytes_to_hex_str(obj.serialize())
+    return obj.serialize().hex()
 
 # Objects that map to bitcoind objects, which can be serialized/deserialized
 
@@ -319,7 +319,7 @@ class CTxIn:
 
     def __repr__(self):
         return "CTxIn(prevout=%s scriptSig=%s nSequence=%i)" \
-            % (repr(self.prevout), bytes_to_hex_str(self.scriptSig),
+            % (repr(self.prevout), self.scriptSig.hex(),
                self.nSequence)
 
 
@@ -343,7 +343,7 @@ class CTxOut:
     def __repr__(self):
         return "CTxOut(nValue=%i.%08i scriptPubKey=%s)" \
             % (self.nValue // COIN, self.nValue % COIN,
-               bytes_to_hex_str(self.scriptPubKey))
+               self.scriptPubKey.hex())
 
 
 class CScriptWitness:
@@ -355,7 +355,7 @@ class CScriptWitness:
 
     def __repr__(self):
         return "CScriptWitness(%s)" % \
-               (",".join([bytes_to_hex_str(x) for x in self.stack]))
+               (",".join([x.hex() for x in self.stack]))
 
     def is_null(self):
         if self.stack:
@@ -591,6 +591,8 @@ class CBlockHeader:
             % (self.nVersion, self.hashPrevBlock, self.hashMerkleRoot,
                time.ctime(self.nTime), self.nBits, self.nNonce)
 
+BLOCK_HEADER_SIZE = len(CBlockHeader().serialize())
+assert_equal(BLOCK_HEADER_SIZE, 80)
 
 class CBlock(CBlockHeader):
     __slots__ = ("vtx",)
@@ -603,7 +605,7 @@ class CBlock(CBlockHeader):
         super(CBlock, self).deserialize(f)
         self.vtx = deser_vector(f, CTransaction)
 
-    def serialize(self, with_witness=False):
+    def serialize(self, with_witness=True):
         r = b""
         r += super(CBlock, self).serialize()
         if with_witness:
@@ -801,7 +803,9 @@ class HeaderAndShortIDs:
         return [ key0, key1 ]
 
     # Version 2 compact blocks use wtxid in shortids (rather than txid)
-    def initialize_from_block(self, block, nonce=0, prefill_list = [0], use_witness = False):
+    def initialize_from_block(self, block, nonce=0, prefill_list=None, use_witness=False):
+        if prefill_list is None:
+            prefill_list = [0]
         self.header = CBlockHeader(block)
         self.nonce = nonce
         self.prefilled_txn = [ PrefilledTransaction(i, block.vtx[i]) for i in prefill_list ]
@@ -1128,7 +1132,7 @@ class msg_block:
         self.block.deserialize(f)
 
     def serialize(self):
-        return self.block.serialize(with_witness=False)
+        return self.block.serialize()
 
     def __repr__(self):
         return "msg_block(block=%s)" % (repr(self.block))
@@ -1150,11 +1154,10 @@ class msg_generic:
         return "msg_generic()"
 
 
-class msg_witness_block(msg_block):
+class msg_no_witness_block(msg_block):
     __slots__ = ()
     def serialize(self):
-        r = self.block.serialize(with_witness=True)
-        return r
+        return self.block.serialize(with_witness=False)
 
 
 class msg_getaddr:
@@ -1314,38 +1317,6 @@ class msg_headers:
         return "msg_headers(headers=%s)" % repr(self.headers)
 
 
-class msg_reject:
-    __slots__ = ("code", "data", "message", "reason")
-    command = b"reject"
-    REJECT_MALFORMED = 1
-
-    def __init__(self):
-        self.message = b""
-        self.code = 0
-        self.reason = b""
-        self.data = 0
-
-    def deserialize(self, f):
-        self.message = deser_string(f)
-        self.code = struct.unpack("<B", f.read(1))[0]
-        self.reason = deser_string(f)
-        if (self.code != self.REJECT_MALFORMED and
-                (self.message == b"block" or self.message == b"tx")):
-            self.data = deser_uint256(f)
-
-    def serialize(self):
-        r = ser_string(self.message)
-        r += struct.pack("<B", self.code)
-        r += ser_string(self.reason)
-        if (self.code != self.REJECT_MALFORMED and
-                (self.message == b"block" or self.message == b"tx")):
-            r += ser_uint256(self.data)
-        return r
-
-    def __repr__(self):
-        return "msg_reject: %s %d %s [%064x]" \
-            % (self.message, self.code, self.reason, self.data)
-
 
 class msg_feefilter:
     __slots__ = ("feerate",)
@@ -1440,17 +1411,15 @@ class msg_blocktxn:
 
     def serialize(self):
         r = b""
-        r += self.block_transactions.serialize(with_witness=False)
+        r += self.block_transactions.serialize()
         return r
 
     def __repr__(self):
         return "msg_blocktxn(block_transactions=%s)" % (repr(self.block_transactions))
 
 
-class msg_witness_blocktxn(msg_blocktxn):
+class msg_no_witness_blocktxn(msg_blocktxn):
     __slots__ = ()
 
     def serialize(self):
-        r = b""
-        r += self.block_transactions.serialize(with_witness=True)
-        return r
+        return self.block_transactions.serialize(with_witness=False)
